@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electrochemical Plot Viewer</title>
+    <style>
+        :root {
+            --bg-dark: #ffffff;
+            --panel-bg: #f5f5f5;
+            --text-light: #333333;
+            --accent: #4a90e2;
+            --border: #cccccc;
+            --hover-bg: rgba(0, 0, 0, 0.05);
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #sidebar {
+            width: 300px;
+            background-color: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        #controls {
+            padding: 15px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        #controls button,
+        .upload-btn {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: var(--accent);
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            text-align: center;
+            box-sizing: border-box;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        #controls button:hover,
+        .upload-btn:hover {
+            background-color: #9b68db;
+            transform: translateY(-1px);
+        }
+
+        #controls button:active,
+        .upload-btn:active {
+            transform: translateY(1px);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        #file-list-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 5px;
+            margin-bottom: 2px;
+            border-radius: 3px;
+        }
+
+        .file-item:hover {
+            background-color: var(--hover-bg);
+        }
+
+        .file-item input[type="checkbox"] {
+            margin-right: 10px;
+            cursor: pointer;
+        }
+
+        .file-item label {
+            cursor: pointer;
+            word-break: break-all;
+            font-size: 14px;
+        }
+
+        #main-view {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--bg-dark);
+            position: relative;
+        }
+
+        #plot-container {
+            flex-grow: 1;
+            width: 100%;
+            height: 100%;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2rem;
+            color: var(--text-light);
+            display: none;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px 30px;
+            border-radius: 8px;
+            z-index: 20;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+    <!-- Load Plotly dynamically -->
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+</head>
+
+<body>
+
+    <div id="sidebar">
+        <div id="controls">
+            <h2 style="margin-top: 0; font-size: 1.2rem; color: var(--accent);">Electro Viewer HTML</h2>
+            <label class="upload-btn">
+                Import Data Folder
+                <input type="file" id="folderInput" webkitdirectory directory multiple>
+            </label>
+            <button id="deselectAllBtn">Deselect All</button>
+        </div>
+        <div id="file-list-container">
+            <div style="color: #888; font-size: 0.9rem; text-align: center; margin-top: 20px;">
+                No folder selected.
+            </div>
+        </div>
+    </div>
+
+    <div id="main-view">
+        <div id="plot-container"></div>
+        <div id="loading">Processing Data...</div>
+    </div>
+
+    <script>
+        let parsedFiles = {}; // filename -> parsed tables obj
+        let loadedFiles = {}; // filename -> raw File object
+
+        const folderInput = document.getElementById('folderInput');
+        const fileListContainer = document.getElementById('file-list-container');
+        const deselectAllBtn = document.getElementById('deselectAllBtn');
+        const loadingOverlay = document.getElementById('loading');
+
+        // Define a nice Plotly-friendly color palette
+        const colors = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+            '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+            '#f1c40f', '#e67e22', '#e74c3c'
+        ];
+
+        folderInput.addEventListener('change', async (event) => {
+            const files = event.target.files;
+            if (!files.length) return;
+
+            // Filter strictly for .DTA ending files
+            const dtaFiles = Array.from(files).filter(f => f.name.toLowerCase().endsWith('.dta'));
+
+            // Sort by filename alphabetically
+            dtaFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+            if (dtaFiles.length === 0) {
+                alert("No .DTA files found in the selected folder.");
+                return;
+            }
+
+            fileListContainer.innerHTML = '';
+            loadedFiles = {};
+            parsedFiles = {};
+
+            dtaFiles.forEach(file => {
+                loadedFiles[file.name] = file;
+
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'file-item';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = 'cb-' + file.name;
+                checkbox.value = file.name;
+                checkbox.addEventListener('change', updatePlotWrapper);
+
+                const label = document.createElement('label');
+                label.htmlFor = 'cb-' + file.name;
+                label.textContent = file.name;
+
+                itemDiv.appendChild(checkbox);
+                itemDiv.appendChild(label);
+                fileListContainer.appendChild(itemDiv);
+            });
+
+            Plotly.purge('plot-container');
+        });
+
+        deselectAllBtn.addEventListener('click', () => {
+            const checkboxes = document.querySelectorAll('.file-item input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = false);
+            updatePlot();
+        });
+
+        async function updatePlotWrapper() {
+            loadingOverlay.style.display = 'block';
+            // Allow UI to update loading state before blocking operation runs
+            setTimeout(async () => {
+                await updatePlot();
+                loadingOverlay.style.display = 'none';
+            }, 50);
+        }
+
+        function parseGamryDta(text) {
+            const lines = text.split(/\r?\n/);
+            const tables = {};
+            let currentTableName = null;
+            let tableLines = [];
+
+            function processTable() {
+                if (currentTableName && tableLines.length > 2) {
+                    const headers = tableLines[0].trim().split('\t');
+                    const dataRow = [];
+                    for (let i = 2; i < tableLines.length; i++) {
+                        const rowStr = tableLines[i].trim();
+                        if (rowStr) {
+                            const params = rowStr.split('\t');
+                            const rowVals = params.map(v => Number(v));
+                            dataRow.push(rowVals);
+                        }
+                    }
+                    if (dataRow.length > 0) {
+                        const cols = {};
+                        for (let j = 0; j < headers.length; j++) {
+                            cols[headers[j]] = dataRow.map(row => {
+                                return (j < row.length) ? row[j] : NaN;
+                            });
+                        }
+                        tables[currentTableName] = cols;
+                    }
+                }
+            }
+
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+                let lineStripped = line.trim();
+
+                if (lineStripped.includes('\tTABLE') || lineStripped.includes(' TABLE')) {
+                    const parts = lineStripped.split(/\s+/);
+                    if (parts.length >= 2 && parts[1] === 'TABLE') {
+                        processTable();
+                        currentTableName = parts[0];
+                        tableLines = [];
+                        continue;
+                    }
+                }
+
+                if (currentTableName) {
+                    tableLines.push(line);
+                }
+            }
+            processTable(); // Catch the trailing table block
+
+            return tables;
+        }
+
+        function readFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = e => reject(e);
+                reader.readAsText(file);
+            });
+        }
+
+        async function updatePlot() {
+            const checkboxes = document.querySelectorAll('.file-item input[type="checkbox"]');
+            const selectedFiles = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+
+            if (selectedFiles.length === 0) {
+                Plotly.purge('plot-container');
+                return;
+            }
+
+            let plotType = null;
+            const traces = [];
+
+            let colorIndex = 0;
+
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const filename = selectedFiles[i];
+
+                if (!parsedFiles[filename]) {
+                    try {
+                        const text = await readFile(loadedFiles[filename]);
+                        parsedFiles[filename] = parseGamryDta(text);
+                    } catch (e) {
+                        console.error('Failed to parse ' + filename, e);
+                        continue;
+                    }
+                }
+
+                const tables = parsedFiles[filename];
+                const hasEIS = 'ZCURVE' in tables;
+                // Identify standard CYCLIC sweeps
+                const curveKeys = Object.keys(tables).filter(k => k.startsWith('CURVE')).sort();
+                const hasCV = curveKeys.length > 0;
+
+                const curColor = colors[colorIndex % colors.length];
+
+                if (hasEIS) {
+                    if (plotType === null) plotType = 'eis';
+                    if (plotType !== 'eis') {
+                        console.warn(`Skipping ${filename}: Cannot mix EIS and CV formats.`);
+                        continue;
+                    }
+
+                    const df = tables['ZCURVE'];
+                    if (df['Zreal'] && df['Zimag']) {
+                        traces.push({
+                            x: df['Zreal'],
+                            y: df['Zimag'].map(z => -z),
+                            mode: 'lines+markers',
+                            name: filename,
+                            marker: { size: 5 },
+                            line: { color: curColor }
+                        });
+                        colorIndex++;
+                    }
+                } else if (hasCV) {
+                    if (plotType === null) plotType = 'cv';
+                    if (plotType !== 'cv') {
+                        console.warn(`Skipping ${filename}: Cannot mix CV and EIS formats.`);
+                        continue;
+                    }
+
+                    let addedLegend = false;
+
+                    // Plot all cyclic iterations overlaying the same unifying color
+                    for (const k of curveKeys) {
+                        const df = tables[k];
+                        if (df['Vf'] && df['Im']) {
+                            traces.push({
+                                x: df['Vf'],
+                                y: df['Im'].map(i => i * 1e6),
+                                mode: 'lines',
+                                name: filename,
+                                showlegend: !addedLegend,
+                                line: { color: curColor }
+                            });
+                            addedLegend = true;
+                        }
+                    }
+                    colorIndex++;
+                }
+            }
+
+            const layout = {
+                title: plotType === 'cv' ? 'Cyclic Voltammetry Overlay' : 'EIS Nyquist Overlay',
+                plot_bgcolor: '#ffffff',
+                paper_bgcolor: '#ffffff',
+                font: { color: '#333333' },
+                xaxis: {
+                    title: plotType === 'cv' ? 'Potential / V vs. Ref' : "Z' (Ω)",
+                    gridcolor: '#e0e0e0',
+                    zerolinecolor: '#888888',
+                    autorange: true
+                },
+                yaxis: {
+                    title: plotType === 'cv' ? 'Current / µA' : "-Z'' (Ω)",
+                    gridcolor: '#e0e0e0',
+                    zerolinecolor: '#888888',
+                    autorange: true
+                },
+                hovermode: 'closest',
+                // Enable standard pan drag by default (stock chart style)
+                dragmode: 'pan'
+            };
+
+            if (plotType === 'eis') {
+                layout.yaxis.scaleanchor = 'x';
+                layout.yaxis.scaleratio = 1;
+            }
+
+            const config = {
+                responsive: true,
+                scrollZoom: true,
+                displaylogo: false,
+                toImageButtonOptions: {
+                    format: 'svg', // Guarantee standard vector output formats
+                    filename: 'electrochem_plot'
+                },
+                modeBarButtonsToRemove: ['lasso2d', 'select2d']
+            };
+
+            Plotly.newPlot('plot-container', traces, layout, config);
+        }
+    </script>
+</body>
+
+</html>
