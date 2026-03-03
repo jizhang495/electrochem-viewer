@@ -139,7 +139,7 @@
 
     <div id="sidebar">
         <div id="controls">
-            <h2 style="margin-top: 0; font-size: 1.2rem; color: var(--accent);">Electro Viewer HTML</h2>
+            <h2 style="margin-top: 0; font-size: 1.2rem; color: var(--accent);">Electrochem Viewer</h2>
             <label class="upload-btn">
                 Import Data Folder
                 <input type="file" id="folderInput" webkitdirectory directory multiple>
@@ -161,6 +161,7 @@
     <script>
         let parsedFiles = {}; // filename -> parsed tables obj
         let loadedFiles = {}; // filename -> raw File object
+        let selectedFilesOrder = []; // filename ordered by selection
 
         const folderInput = document.getElementById('folderInput');
         const fileListContainer = document.getElementById('file-list-container');
@@ -192,6 +193,7 @@
             fileListContainer.innerHTML = '';
             loadedFiles = {};
             parsedFiles = {};
+            selectedFilesOrder = [];
 
             dtaFiles.forEach(file => {
                 loadedFiles[file.name] = file;
@@ -203,7 +205,14 @@
                 checkbox.type = 'checkbox';
                 checkbox.id = 'cb-' + file.name;
                 checkbox.value = file.name;
-                checkbox.addEventListener('change', updatePlotWrapper);
+                checkbox.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedFilesOrder.push(file.name);
+                    } else {
+                        selectedFilesOrder = selectedFilesOrder.filter(name => name !== file.name);
+                    }
+                    updatePlotWrapper();
+                });
 
                 const label = document.createElement('label');
                 label.htmlFor = 'cb-' + file.name;
@@ -220,6 +229,7 @@
         deselectAllBtn.addEventListener('click', () => {
             const checkboxes = document.querySelectorAll('.file-item input[type="checkbox"]');
             checkboxes.forEach(cb => cb.checked = false);
+            selectedFilesOrder = [];
             updatePlot();
         });
 
@@ -295,8 +305,7 @@
         }
 
         async function updatePlot() {
-            const checkboxes = document.querySelectorAll('.file-item input[type="checkbox"]');
-            const selectedFiles = Array.from(checkboxes).filter(cb => cb.checked).map(cb => cb.value);
+            const selectedFiles = selectedFilesOrder;
 
             if (selectedFiles.length === 0) {
                 Plotly.purge('plot-container');
