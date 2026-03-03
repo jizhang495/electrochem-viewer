@@ -162,6 +162,8 @@
         let parsedFiles = {}; // filename -> parsed tables obj
         let loadedFiles = {}; // filename -> raw File object
         let selectedFilesOrder = []; // filename ordered by selection
+        let fileColors = {}; // filename -> assigned color index
+        let nextColorIndex = 0;
 
         const folderInput = document.getElementById('folderInput');
         const fileListContainer = document.getElementById('file-list-container');
@@ -194,6 +196,8 @@
             loadedFiles = {};
             parsedFiles = {};
             selectedFilesOrder = [];
+            fileColors = {};
+            nextColorIndex = 0;
 
             dtaFiles.forEach(file => {
                 loadedFiles[file.name] = file;
@@ -208,6 +212,9 @@
                 checkbox.addEventListener('change', (e) => {
                     if (e.target.checked) {
                         selectedFilesOrder.push(file.name);
+                        if (!(file.name in fileColors)) {
+                            fileColors[file.name] = nextColorIndex++;
+                        }
                     } else {
                         selectedFilesOrder = selectedFilesOrder.filter(name => name !== file.name);
                     }
@@ -315,8 +322,6 @@
             let plotType = null;
             const traces = [];
 
-            let colorIndex = 0;
-
             for (let i = 0; i < selectedFiles.length; i++) {
                 const filename = selectedFiles[i];
 
@@ -336,7 +341,8 @@
                 const curveKeys = Object.keys(tables).filter(k => k.startsWith('CURVE')).sort();
                 const hasCV = curveKeys.length > 0;
 
-                const curColor = colors[colorIndex % colors.length];
+                const cIndex = fileColors[filename];
+                const curColor = colors[cIndex % colors.length];
 
                 if (hasEIS) {
                     if (plotType === null) plotType = 'eis';
@@ -355,7 +361,6 @@
                             marker: { size: 5 },
                             line: { color: curColor }
                         });
-                        colorIndex++;
                     }
                 } else if (hasCV) {
                     if (plotType === null) plotType = 'cv';
@@ -381,7 +386,6 @@
                             addedLegend = true;
                         }
                     }
-                    colorIndex++;
                 }
             }
 
